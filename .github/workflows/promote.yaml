@@ -1,0 +1,30 @@
+name: Promote
+run-name: "Promote ${{ github.ref_name }}"
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  create-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # NOTE: We explicitly set the refs otherwise the tag
+          # annotations content is not fetched
+          # See: https://github.com/actions/checkout/issues/882
+          ref: ${{ github.ref }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Go-errors ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          # We consider pre-releases if the tag contains a hyphen
+          # e.g. v1.2.3-alpha.0
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
