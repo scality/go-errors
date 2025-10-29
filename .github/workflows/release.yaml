@@ -1,0 +1,83 @@
+name: "Release"
+run-name: Release new ${{ inputs.version-type }} from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version-type:
+        description: "Version type"
+        required: true
+        type: choice
+        default: "alpha"
+        options:
+          - "alpha"
+          - "beta"
+          - "GA"
+      version-scope:
+        description: "Version scope"
+        required: true
+        type: choice
+        default: "patch"
+        options:
+          - "patch"
+          - "minor"
+          - "major"
+
+jobs:
+  prepare-version:
+    runs-on: ubuntu-24.04
+    if: github.ref_name == 'main'
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        # NOTE: This is needed otherwise it's the same user that create the tag
+        # than the one triggering the workflow on push tag which does not work
+        with:
+          app-id: ${{ vars.ACTIONS_APP_ID }}
+          private-key: ${{ secrets.ACTIONS_APP_PRIVATE_KEY }}
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Install semver tool
+        run: |
+          curl --fail -LO https://raw.githubusercontent.com/fsaintjacques/semver-tool/3.4.0/src/semver
+          chmod +x ./semver
+      - name: Compose release tag
+        run: |
+          last_ga_tag=$(git tag --sort=taggerdate --list "v*" | grep -v '\-' | tail -n 1)
+          if [[ -z "$last_ga_tag" ]]; then
+            last_ga_tag="0.0.0"
+          fi
+
+          new_version=$(./semver bump ${{ inputs.version-scope }} "$last_ga_tag")
+
+          if [[ "${{ inputs.version-type }}" == "alpha" ]] || [[ "${{ inputs.version-type }}" == "beta" ]]; then
+            last_pre_tag=$(git tag --sort=taggerdate --list "v$new_version-${{ inputs.version-type }}.*" | tail -n 1)
+            if [[ -z "$last_pre_tag" ]]; then
+              new_version=$new_version-${{ inputs.version-type }}.1
+            else
+              new_version=$(./semver bump prerel "$last_pre_tag")
+            fi
+          fi
+
+          if [[ "${new_version:0:1}" != "v" ]]; then
+            new_version="v$new_version"
+          fi
+
+          echo "New version: $new_version"
+          echo "RELEASE_TAG=$new_version" >> $GITHUB_ENV
+      - name: Validate ${{ env.RELEASE_TAG }} tag
+        run: ./semver validate ${{ env.RELEASE_TAG }}
+
+      - name: Create and push `${{ env.RELEASE_TAG }}` tag
+        run: |
+          git fsck
+          git gc
+          
+          git config --global user.email ${{ github.actor }}@scality.com
+          git config --global user.name ${{ github.actor }}
+
+          git tag -a "${{ env.RELEASE_TAG }}" -m "Go-errors ${{ env.RELEASE_TAG }}"
+          git push origin "${{ env.RELEASE_TAG }}"
