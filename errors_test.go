@@ -558,7 +558,7 @@ var _ = Describe("Errors", func() {
 		})
 
 		It("should return error interface", func() {
-			var err error = New("test error")
+			err := New("test error")
 			Expect(err).NotTo(BeNil())
 		})
 
@@ -611,7 +611,7 @@ var _ = Describe("Errors", func() {
 		It("should handle nil properties map", func() {
 			e := &Error{Title: "test"}
 			Expect(e.Properties).To(BeNil())
-			e.WithProperty("key", "value")
+			e.WithProperty("key", "value") // nolint:errcheck // No way to get wrong here.
 			Expect(e.Properties).NotTo(BeNil())
 			Expect(e.Properties["key"]).To(Equal("value"))
 		})
@@ -646,7 +646,7 @@ var _ = Describe("Errors", func() {
 		It("should create new instance, not reference", func() {
 			original := From(ErrForbidden)
 			copy := From(original)
-			copy.WithDetail("new detail")
+			copy.WithDetail("new detail") // nolint:errcheck // No way to get wrong here.
 			Expect(original.Details).To(BeEmpty())
 			Expect(copy.Details).To(HaveLen(1))
 		})
