@@ -28,7 +28,8 @@ import (
 )
 
 func main() {
-    err := errors.New("database error").
+    var ErrDB = errors.New("database error")
+    err := errors.From(ErrDB).
         WithIdentifier(1001).
         WithDetail("connection timeout").
         WithProperty("host", "localhost").
@@ -40,45 +41,40 @@ func main() {
 
 ## Usage Examples
 
-### Creating Basic Errors
-
-```go
-// Simple error
-err := errors.New("validation failed").Throw()
-
-// Error with identifier
-err := errors.New("not found").
-    WithIdentifier(404).
-    Throw()
-```
-
 ### Adding Details and Properties
 
 ```go
+// Initializing Domain errors
+var (
+    ErrValidationFailed = errors.New("validation failed")
+    ErrRequestFailed = errors.New("request failed")
+    ErrDatabaseError = errors.New("database error")
+)
+
 // Multiple details
 // Each WithDetail() call appends to the Details slice
-err := errors.New("validation failed").
+err1 := errors.From(ErrValidationFailed).
     WithDetail("email is required").
     WithDetail("password must be at least 8 characters").
     Throw()
 
 // Details can also be formatted
-err := errors.New("request failed").
+err2 := errors.From(ErrRequestFailed).
     WithDetailf("failed to connect to %s:%d", "api.example.com", 443).
     WithDetail("timeout after 30 seconds").
     Throw()
 
 // Single property
-err := errors.New("request failed").
+err3 := errors.From(ErrRequestFailed).
     WithProperty("url", "https://api.example.com").
     WithProperty("status_code", 500).
     Throw()
 
 // Multiple properties at once
-err := errors.New("database error").
+err4 := errors.From(ErrDatabaseError).
     WithProperties(map[string]any{
-        "host": "localhost",
-        "port": 5432,
+        "host":     "localhost",
+        "port":     5432,
         "database": "myapp",
     }).
     Throw()
@@ -87,11 +83,13 @@ err := errors.New("database error").
 ### Error Wrapping
 
 ```go
-func getUserByID(id int) (*User, error) {
+var ErrUserNotFound = errors.New("user not found")
+
+func getUserByID(id string) (*User, error) {
     user, err := db.Query(id)
     if err != nil {
-        return nil, errors.New("user not found").
-            WithIdentifier(404).
+        return nil, errors.From(ErrUserNotFound).
+            WithIdentifier(404000).
             CausedBy(err).
             Throw()
     }
@@ -120,16 +118,18 @@ func getUser(id int) (*User, error) {
 ### Stack Traces
 
 ```go
+var ErrSomethingWentWrong = errors.New("something went wrong")
+
 func layer3() error {
-    return errors.New("something went wrong").Throw()
+	return errors.From(ErrSomethingWentWrong).Throw()
 }
 
 func layer2() error {
-    err := layer3()
-    if err != nil {
-        return errors.Stamp(err) // Adds layer2's location to stack
-    }
-    return nil
+	err := layer3()
+	if err != nil {
+		return errors.Stamp(err) // Adds layer2's location to stack
+	}
+	return nil
 }
 
 func layer1() error {
@@ -147,7 +147,7 @@ func layer1() error {
 
 ```go
 // Using errors.Is for comparison
-notFoundErr := errors.New("not found").WithIdentifier(404)
+notFoundErr := errors.New("not found")
 
 if errors.Is(err, notFoundErr) {
     // Handle not found error
@@ -165,9 +165,6 @@ if errors.As(err, &e) {
         fmt.Printf("  Detail %d: %s\n", i, detail)
     }
 }
-
-// Unwrapping errors
-cause := errors.Unwrap(err)
 ```
 
 ### Converting Standard Errors
@@ -179,7 +176,7 @@ err := errors.From(stdErr).
     WithDetail("additional context").
     Throw()
 
-// Using Intercept() when you're unsure of the error type
+// Using Intercept() to complete the error
 func handleError(err error) error {
     e := errors.Intercept(err)
     e.WithProperty("handled_at", time.Now())

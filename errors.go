@@ -62,12 +62,14 @@ func New(title string) error {
 
 // Wrap wraps an error with a message.
 func Wrap(err error, msg string) error {
-	return From(err).WithDetail(msg).Throw()
+	trace := trace()
+	return from(err, true).WithDetail(msg).throw(trace)
 }
 
 // Wrapf wraps an error with a formatted message.
 func Wrapf(err error, format string, args ...any) error {
-	return From(err).WithDetailf(format, args...).Throw()
+	trace := trace()
+	return from(err, true).WithDetailf(format, args...).throw(trace)
 }
 
 // From creates a new *Error from any error type.
@@ -76,6 +78,10 @@ func Wrapf(err error, format string, args ...any) error {
 // If the error is an *Error, it returns a copy of the original error with the same
 // title, identifier, details, properties.
 func From(err error) *Error {
+	return from(err, false)
+}
+
+func from(err error, copyStack bool) *Error {
 	var t *Error
 
 	ok := errors.As(err, &t)
@@ -88,6 +94,9 @@ func From(err error) *Error {
 		Identifier: t.Identifier,
 		Details:    t.Details,
 		Properties: t.Properties,
+	}
+	if copyStack {
+		e.Stack = t.Stack
 	}
 
 	if !ok {
