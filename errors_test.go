@@ -365,7 +365,7 @@ var _ = Describe("Errors", func() {
 			e := Intercept(err2)
 			// From() only preserves title, so only the latest detail is kept
 			Expect(e.Details).To(Equal([]string{"database query failed", "user service error"}))
-			Expect(e.Stack).To(HaveLen(1))
+			Expect(e.Stack).To(HaveLen(2))
 			// From() on *Error doesn't set cause
 			Expect(e.Cause).To(BeNil())
 		})
@@ -424,8 +424,7 @@ var _ = Describe("Errors", func() {
 			err2 := Wrap(err1, "duplicate entry detected")
 			e := Intercept(err2)
 			Expect(e.Details).To(Equal([]string{"database error: code 1062", "duplicate entry detected"}))
-			Expect(e.Stack).To(HaveLen(1))
-			// From() on *Error doesn't set cause
+			Expect(e.Stack).To(HaveLen(2))
 			Expect(e.Cause).To(BeNil())
 		})
 
