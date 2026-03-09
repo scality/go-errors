@@ -85,9 +85,9 @@ func call3() error {
     // Something went wrong here
 	return errors.Wrap(
         ErrForbidden,
-        errors.WithIdentifer(2),
+        errors.WithIdentifier(2),
         errors.WithDetail("permission denied"),
-		errors.WithProperty("File", "test.txt"),
+        errors.WithProperty("File", "test.txt"),
         errors.CausedBy(err),
     )
 }
