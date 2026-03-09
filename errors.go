@@ -8,6 +8,8 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,97 +38,88 @@ type Trace struct {
 type Error struct {
 	// The error title
 	Title string `json:"title" yaml:"title"`
-
-	// A numeric error code for programmatic handling
-	Identifier int32 `json:"identifier,omitempty" yaml:"identifier,omitempty"`
-
-	// Additional context as a list of strings
-	Details []string `json:"details,omitempty" yaml:"details,omitempty"`
-
-	// Key-value pairs for arbitrary metadata
-	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
-
-	// The underlying error that caused this error
-	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
-
+	// Options for the error
+	Options Opts `json:"options,omitempty" yaml:"options,omitempty"`
 	// A trace of where the error was thrown
 	Stack []*Trace `json:"stack,omitempty" yaml:"stack,omitempty"`
+}
+
+type Opts struct {
+	// A numeric error code for programmatic handling
+	Identifier []uint32 `json:"identifier,omitempty" yaml:"identifier,omitempty"`
+	// Additional context as a list of strings
+	Details []string `json:"details,omitempty" yaml:"details,omitempty"`
+	// Key-value pairs for arbitrary metadata
+	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
+	// The underlying error that caused this error
+	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
 // New creates a new Error with the given title.
 func New(title string) error {
 	return &Error{
 		Title: title,
+		Options: Opts{
+			Details:    []string{},
+			Properties: make(map[string]any),
+			Cause:      errors.New(title),
+		},
+	}
+}
+
+// Option is a function type that modifies the Options struct.
+type Option func(*Opts)
+
+// WithIdentifier sets a numeric identifier for the error.
+func WithIdentifier(id uint32) Option {
+	return func(c *Opts) {
+		c.Identifier = append(c.Identifier, id)
+	}
+}
+
+// WithDetail sets a detail string for the error.
+func WithDetail(msg string) Option {
+	return func(c *Opts) {
+		c.Details = append(c.Details, msg)
+	}
+}
+
+// WithDetailf sets a detail string for the error using a format string.
+func WithDetailf(format string, args ...any) Option {
+	return func(c *Opts) {
+		c.Details = append(c.Details, fmt.Sprintf(format, args...))
+	}
+}
+
+// WithIdentifier sets a numeric identifier for the error.
+func WithProperty(key string, value any) Option {
+	return func(c *Opts) {
+		c.Properties[key] = value
+	}
+}
+
+// CausedBy sets the underlying cause of this error.
+func CausedBy(err error) Option {
+	return func(c *Opts) {
+		c.Cause = err
 	}
 }
 
 // Wrap wraps an error with a message.
-func Wrap(err error, msg string) error {
+func Wrap(err error, opts ...Option) error {
 	trace := trace()
-	return from(err, true).WithDetail(msg).throw(trace)
-}
-
-// Wrapf wraps an error with a formatted message.
-func Wrapf(err error, format string, args ...any) error {
-	trace := trace()
-	return from(err, true).WithDetailf(format, args...).throw(trace)
-}
-
-// From creates a new *Error from any error type.
-// If the error is not an *Error, it creates a new error with title "unknown error"
-// and sets the original error as the cause.
-// If the error is an *Error, it returns a copy of the original error with the same
-// title, identifier, details, properties.
-func From(err error) *Error {
-	return from(err, false)
-}
-
-func from(err error, copyStack bool) *Error {
-	var t *Error
-
-	ok := errors.As(err, &t)
-	if !ok {
-		t, _ = New("unknown error").(*Error)
-	}
-
-	e := &Error{
-		Title:      t.Title,
-		Identifier: t.Identifier,
-		Details:    t.Details,
-		Properties: t.Properties,
-	}
-	if copyStack {
-		e.Stack = t.Stack
-	}
-
-	if !ok {
-		e.Cause = err
-	}
-
-	return e
-}
-
-// Intercept converts any error into an *Error type.
-// If the provided error is already an *Error, it returns it as-is.
-// Otherwise, it creates a new *Error wrapping the original error using From().
-func Intercept(err error) *Error {
-	var e *Error
-	if errors.As(err, &e) {
-		return e
-	}
-
-	return From(err)
+	return from(err, true, opts...).throw(trace)
 }
 
 // Is compares this error with another error for equality.
-// Two errors are considered equal if they have the same Title and Identifier.
+// Two errors are considered equal if they have the same Title and Identifiers.
 func (e *Error) Is(err error) bool {
 	other := new(Error)
 	if ok := errors.As(err, &other); !ok {
 		return false
 	}
 
-	return e.Title == other.Title && e.Identifier == other.Identifier
+	return e.Title == other.Title && slices.Equal(e.Options.Identifier, other.Options.Identifier)
 }
 
 // Is is a wrapper around errors.Is to compare two errors for equality.
@@ -136,12 +129,25 @@ func Is(err, target error) bool { return errors.Is(err, target) }
 func As(err error, target any) bool { return errors.As(err, target) }
 
 // Unwrap returns the underlying cause of this error, nil if no cause.
+func Unwrap(err error) error {
+	u, ok := err.(interface {
+		Unwrap() error
+	})
+	if !ok {
+		return nil
+	}
+	return u.Unwrap()
+}
+
+// Unwrap returns the underlying cause of this error, nil if no cause.
 func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil
 	}
-
-	return e.Cause
+	if e.Options.Cause != nil {
+		return e.Options.Cause
+	}
+	return nil
 }
 
 // Error returns a formatted string representation of the error,
@@ -155,21 +161,21 @@ func (e *Error) Error() string {
 
 	fmt.Fprintf(
 		b,
-		"%s (%d):",
+		"%s (%s):",
 		strings.ToLower(e.Title),
-		e.Identifier,
+		concatenateUint32Slice(e.Options.Identifier),
 	)
 
-	if len(e.Details) > 0 {
+	if len(e.Options.Details) > 0 {
 		fmt.Fprintf(
 			b,
 			" %s:",
 
-			strings.Join(e.Details, ": "),
+			strings.Join(e.Options.Details, ": "),
 		)
 	}
 
-	for k, v := range e.Properties {
+	for k, v := range e.Options.Properties {
 		fmt.Fprintf(b, " %s='%v',", k, v)
 	}
 
@@ -187,8 +193,8 @@ func (e *Error) Error() string {
 		}
 	}
 
-	if e.Cause != nil {
-		fmt.Fprintf(b, " caused by: %v", e.Cause.Error())
+	if e.Options.Cause != nil {
+		fmt.Fprintf(b, " caused by: %v", e.Options.Cause.Error())
 	}
 
 	return string(bytes.TrimSuffix(bytes.TrimSuffix(b.Bytes(), []byte(",")), []byte(":")))
@@ -206,55 +212,40 @@ func (e *Error) String() string {
 	return b.String()
 }
 
-// Stamp adds a stack trace entry to an existing error.
-func Stamp(err error) error {
-	trace := trace()
+func from(err error, copyStack bool, opts ...Option) *Error {
+	var t *Error
 
-	return Intercept(err).throw(trace)
-}
-
-// WithIdentifier sets a numeric identifier for the error.
-func (e *Error) WithIdentifier(id int32) *Error {
-	e.Identifier = id
-
-	return e
-}
-
-// WithDetail adds a detail string to the error for additional context.
-func (e *Error) WithDetail(detail string) *Error {
-	e.Details = append(e.Details, strings.TrimSuffix(detail, "."))
-
-	return e
-}
-
-// WithDetailf adds a detail string to the error for additional context using a format string.
-func (e *Error) WithDetailf(format string, args ...any) *Error {
-	return e.WithDetail(fmt.Sprintf(format, args...))
-}
-
-// WithProperties adds multiple key-value properties to the error.
-func (e *Error) WithProperties(properties map[string]any) *Error {
-	for k, v := range properties {
-		e.WithProperty(k, v) // nolint: errcheck // No way to get wrong here.
+	ok := errors.As(err, &t)
+	if !ok {
+		t, _ = New("unknown error").(*Error)
 	}
 
-	return e
-}
-
-// WithProperty adds a single key-value property to the error.
-func (e *Error) WithProperty(key string, value any) *Error {
-	if e.Properties == nil {
-		e.Properties = make(map[string]any)
+	props := make(map[string]any)
+	for k, v := range t.Options.Properties {
+		props[k] = v
+	}
+	o := Opts{
+		Details:    t.Options.Details,
+		Properties: props,
+		Cause:      t.Options.Cause,
+	}
+	if t.Options.Identifier != nil {
+		o.Identifier = t.Options.Identifier
+	}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	e := &Error{
+		Title:   t.Title,
+		Options: o,
+	}
+	if copyStack {
+		e.Stack = t.Stack
 	}
 
-	e.Properties[key] = value
-
-	return e
-}
-
-// CausedBy sets the underlying cause of this error.
-func (e *Error) CausedBy(err error) *Error {
-	e.Cause = err
+	if !ok {
+		e.Options.Cause = err
+	}
 
 	return e
 }
@@ -267,13 +258,6 @@ func (e *Error) throw(trace *Trace) error {
 	e.Stack = append([]*Trace{trace}, e.Stack...)
 
 	return e
-}
-
-// Throw adds a stack trace entry to the error and returns it as an error interface.
-func (e *Error) Throw() error {
-	trace := trace()
-
-	return e.throw(trace)
 }
 
 func trace() *Trace {
@@ -294,4 +278,36 @@ func trace() *Trace {
 		Line:      line,
 		Timestamp: time.Now().UTC(),
 	}
+}
+
+// concatenateUint32Slice takes a slice of uint32 and returns a single string
+// with all elements joined by a hyphen ("-").
+func concatenateUint32Slice(nums []uint32) string {
+	if len(nums) == 0 {
+		return ""
+	}
+
+	slices.Reverse(nums)
+
+	// Use a strings.Builder for efficient string concatenation.
+	var builder strings.Builder
+
+	// Iterate over the slice elements reversly.
+	for i, num := range nums {
+		// Convert the int32 to its string representation.
+		// We use base 10 (decimal) and specify 32-bit type for clarity,
+		// though 'FormatInt' takes an int64 internally (int32 is safely converted).
+		str := strconv.FormatInt(int64(num), 10)
+
+		// Write the string representation to the builder.
+		builder.WriteString(str)
+
+		// Append the separator for all elements except the last one.
+		if i < len(nums)-1 {
+			builder.WriteString("-")
+		}
+	}
+
+	// Return the final concatenated string.
+	return builder.String()
 }
