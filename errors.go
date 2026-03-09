@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
+	"io"
+	"maps"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
-	"time"
 )
 
 // Trace represents a single entry in an error's stack trace.
@@ -23,9 +25,6 @@ type Trace struct {
 
 	// The line where the error occurred
 	Line int `json:"line,omitempty" yaml:"line,omitempty"`
-
-	// The timestamp when trace was generated
-	Timestamp time.Time `json:"timestamp,omitempty" yaml:"timestamp,omitempty"`
 }
 
 // Error is an enhanced error implementation that supports structured error information,
@@ -36,97 +35,131 @@ type Trace struct {
 type Error struct {
 	// The error title
 	Title string `json:"title" yaml:"title"`
+	// Options for the error
+	opts `json:",inline" yaml:",inline"`
+	// A trace of where the error was thrown
+	stack []*Trace
+}
 
+type causeError struct {
+	error
+}
+
+type opts struct {
 	// A numeric error code for programmatic handling
-	Identifier int32 `json:"identifier,omitempty" yaml:"identifier,omitempty"`
-
+	Identifier []uint32 `json:"identifier,omitempty" yaml:"identifier,omitempty"`
 	// Additional context as a list of strings
 	Details []string `json:"details,omitempty" yaml:"details,omitempty"`
-
 	// Key-value pairs for arbitrary metadata
 	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
-
 	// The underlying error that caused this error
-	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
+	Cause *causeError `json:"cause,omitempty" yaml:"cause,omitempty"`
+}
 
-	// A trace of where the error was thrown
+type errorWithStack struct {
+	Error
 	Stack []*Trace `json:"stack,omitempty" yaml:"stack,omitempty"`
+}
+
+func (e *Error) Format(s fmt.State, verb rune) {
+	if e == nil {
+		return
+	}
+	switch verb {
+	case 'v':
+		if s.Flag('+') {
+			json.NewEncoder(s).Encode(errorWithStack{Error: *e, Stack: e.stack}) //nolint:errcheck
+			return
+		}
+		json.NewEncoder(s).Encode(e) //nolint:errcheck
+	case 's', 'q':
+		io.WriteString(s, e.Error()) //nolint:errcheck
+	}
+}
+
+func (c causeError) MarshalJSON() ([]byte, error) {
+	if t, ok := c.error.(*Error); ok {
+		return json.Marshal(t)
+	}
+	return json.Marshal(c.Error())
 }
 
 // New creates a new Error with the given title.
 func New(title string) error {
 	return &Error{
 		Title: title,
+		opts: opts{
+			Details:    []string{},
+			Properties: make(map[string]any),
+		},
 	}
 }
 
-// Wrap wraps an error with a message.
-func Wrap(err error, msg string) error {
+// Option is a function type that modifies the Options struct.
+type Option func(*opts)
+
+// WithIdentifier sets a numeric identifier for the error.
+func WithIdentifier(id uint32) Option {
+	return func(c *opts) {
+		c.Identifier = append(c.Identifier, id)
+	}
+}
+
+// WithDetail sets a detail string for the error.
+func WithDetail(msg string) Option {
+	return func(c *opts) {
+		c.Details = append(c.Details, msg)
+	}
+}
+
+// WithDetailf sets a detail string for the error using a format string.
+func WithDetailf(format string, args ...any) Option {
+	return func(c *opts) {
+		c.Details = append(c.Details, fmt.Sprintf(format, args...))
+	}
+}
+
+// WithProperty sets a property for the error.
+func WithProperty(key string, value any) Option {
+	if key == "" {
+		return func(c *opts) {}
+	}
+	return func(c *opts) {
+		c.Properties[key] = value
+	}
+}
+
+// CausedBy sets the underlying cause of this error.
+func CausedBy(err error) Option {
+	return func(c *opts) {
+		c.Cause = &causeError{error: err}
+	}
+}
+
+// Wrap wraps an error with a message
+// returns an "unknown error" when err is nil
+func Wrap(err error, opts ...Option) error {
 	trace := trace()
-	return from(err, true).WithDetail(msg).throw(trace)
-}
-
-// Wrapf wraps an error with a formatted message.
-func Wrapf(err error, format string, args ...any) error {
-	trace := trace()
-	return from(err, true).WithDetailf(format, args...).throw(trace)
-}
-
-// From creates a new *Error from any error type.
-// If the error is not an *Error, it creates a new error with title "unknown error"
-// and sets the original error as the cause.
-// If the error is an *Error, it returns a copy of the original error with the same
-// title, identifier, details, properties.
-func From(err error) *Error {
-	return from(err, false)
-}
-
-func from(err error, copyStack bool) *Error {
-	var t *Error
-
-	ok := errors.As(err, &t)
-	if !ok {
-		t, _ = New("unknown error").(*Error)
-	}
-
-	e := &Error{
-		Title:      t.Title,
-		Identifier: t.Identifier,
-		Details:    t.Details,
-		Properties: t.Properties,
-	}
-	if copyStack {
-		e.Stack = t.Stack
-	}
-
-	if !ok {
-		e.Cause = err
-	}
-
-	return e
-}
-
-// Intercept converts any error into an *Error type.
-// If the provided error is already an *Error, it returns it as-is.
-// Otherwise, it creates a new *Error wrapping the original error using From().
-func Intercept(err error) *Error {
-	var e *Error
-	if errors.As(err, &e) {
-		return e
-	}
-
-	return From(err)
+	return from(err, true, opts...).throw(trace)
 }
 
 // Is compares this error with another error for equality.
-// Two errors are considered equal if they have the same Title and Identifier.
+// Two errors match if they have same Title and same Identifier*
+// (*) or if given argument is a parent of the other.
 func (e *Error) Is(err error) bool {
 	other := new(Error)
 	if ok := errors.As(err, &other); !ok {
 		return false
 	}
 
-	return e.Title == other.Title && e.Identifier == other.Identifier
+	if e.Title != other.Title {
+		return false
+	}
+	a, b := e.Identifier, other.Identifier
+	if len(a) < len(b) {
+		return false
+	}
+	return slices.Equal(b, a[:len(b)])
 }
 
 // Is is a wrapper around errors.Is to compare two errors for equality.
@@ -136,12 +169,25 @@ func Is(err, target error) bool { return errors.Is(err, target) }
 func As(err error, target any) bool { return errors.As(err, target) }
 
 // Unwrap returns the underlying cause of this error, nil if no cause.
+func Unwrap(err error) error {
+	u, ok := err.(interface {
+		Unwrap() error
+	})
+	if !ok {
+		return nil
+	}
+	return u.Unwrap()
+}
+
+// Unwrap returns the underlying cause of this error, nil if no cause.
 func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil
 	}
-
-	return e.Cause
+	if e.Cause != nil {
+		return e.Cause.error
+	}
+	return nil
 }
 
 // Error returns a formatted string representation of the error,
@@ -155,9 +201,9 @@ func (e *Error) Error() string {
 
 	fmt.Fprintf(
 		b,
-		"%s (%d):",
+		"%s (%s):",
 		strings.ToLower(e.Title),
-		e.Identifier,
+		concatenateUint32Slice(e.Identifier),
 	)
 
 	if len(e.Details) > 0 {
@@ -169,92 +215,77 @@ func (e *Error) Error() string {
 		)
 	}
 
-	for k, v := range e.Properties {
+	// order by keys before printing for deterministic output
+	keys := make([]string, 0, len(e.Properties))
+	for k := range e.Properties {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		v := e.Properties[k]
 		fmt.Fprintf(b, " %s='%v',", k, v)
 	}
 
-	if len(e.Stack) > 0 {
-		tail := e.Stack[len(e.Stack)-1]
-
-		if tail != nil {
-			fmt.Fprintf(
-				b,
-				" at=(func='%s', file='%s', line='%d'),",
-				path.Base(tail.Function),
-				filepath.Base(tail.File),
-				tail.Line,
+	if len(e.stack) > 0 {
+		stack := make([]string, 0, len(e.stack))
+		for i := len(e.stack) - 1; i >= 0; i-- {
+			trace := e.stack[i]
+			stack = append(
+				stack,
+				fmt.Sprintf(
+					"(func='%s', file='%s', line='%d')",
+					trace.Function,
+					filepath.Base(trace.File),
+					trace.Line,
+				),
 			)
 		}
+		fmt.Fprintf(
+			b,
+			" at=[%s]",
+			strings.Join(stack, ", "),
+		)
 	}
 
 	if e.Cause != nil {
-		fmt.Fprintf(b, " caused by: %v", e.Cause.Error())
+		fmt.Fprintf(b, ", caused by: %v", e.Cause.Error())
 	}
 
 	return string(bytes.TrimSuffix(bytes.TrimSuffix(b.Bytes(), []byte(",")), []byte(":")))
 }
 
-// String returns a JSON representation of the error.
-func (e *Error) String() string {
-	if e == nil {
-		return ""
+func from(err error, copyStack bool, options ...Option) *Error {
+	var t *Error
+
+	ok := errors.As(err, &t)
+	if !ok {
+		t, _ = New("unknown error").(*Error)
 	}
 
-	b := bytes.NewBuffer(nil)
-	json.NewEncoder(b).Encode(e) // nolint: errcheck // No way to get wrong here.
-
-	return b.String()
-}
-
-// Stamp adds a stack trace entry to an existing error.
-func Stamp(err error) error {
-	trace := trace()
-
-	return Intercept(err).throw(trace)
-}
-
-// WithIdentifier sets a numeric identifier for the error.
-func (e *Error) WithIdentifier(id int32) *Error {
-	e.Identifier = id
-
-	return e
-}
-
-// WithDetail adds a detail string to the error for additional context.
-func (e *Error) WithDetail(detail string) *Error {
-	e.Details = append(e.Details, strings.TrimSuffix(detail, "."))
-
-	return e
-}
-
-// WithDetailf adds a detail string to the error for additional context using a format string.
-func (e *Error) WithDetailf(format string, args ...any) *Error {
-	return e.WithDetail(fmt.Sprintf(format, args...))
-}
-
-// WithProperties adds multiple key-value properties to the error.
-func (e *Error) WithProperties(properties map[string]any) *Error {
-	for k, v := range properties {
-		e.WithProperty(k, v) // nolint: errcheck // No way to get wrong here.
+	props := make(map[string]any, len(t.Properties))
+	maps.Copy(props, t.Properties)
+	o := opts{
+		Details:    slices.Clone(t.Details),
+		Properties: props,
+		Cause:      t.Cause,
+	}
+	if t.Identifier != nil {
+		o.Identifier = slices.Clone(t.Identifier)
+	}
+	for _, opt := range options {
+		opt(&o)
+	}
+	e := &Error{
+		Title: t.Title,
+		opts:  o,
+	}
+	if copyStack {
+		e.stack = t.stack
 	}
 
-	return e
-}
-
-// WithProperty adds a single key-value property to the error.
-func (e *Error) WithProperty(key string, value any) *Error {
-	if e.Properties == nil {
-		e.Properties = make(map[string]any)
+	if !ok && err != nil {
+		e.Cause = &causeError{error: err}
 	}
-
-	e.Properties[key] = value
-
-	return e
-}
-
-// CausedBy sets the underlying cause of this error.
-func (e *Error) CausedBy(err error) *Error {
-	e.Cause = err
 
 	return e
 }
@@ -264,16 +295,9 @@ func (e *Error) throw(trace *Trace) error {
 		return e
 	}
 
-	e.Stack = append([]*Trace{trace}, e.Stack...)
+	e.stack = append([]*Trace{trace}, e.stack...)
 
 	return e
-}
-
-// Throw adds a stack trace entry to the error and returns it as an error interface.
-func (e *Error) Throw() error {
-	trace := trace()
-
-	return e.throw(trace)
 }
 
 func trace() *Trace {
@@ -289,9 +313,42 @@ func trace() *Trace {
 	}
 
 	return &Trace{
-		Function:  fn.Name(),
-		File:      file,
-		Line:      line,
-		Timestamp: time.Now().UTC(),
+		Function: fn.Name(),
+		File:     file,
+		Line:     line,
 	}
+}
+
+// concatenateUint32Slice takes a slice of uint32 and returns a single reversed string
+// with all elements joined by a hyphen ("-").
+func concatenateUint32Slice(nums []uint32) string {
+	if len(nums) == 0 {
+		return ""
+	}
+
+	// Clone to avoid modifying the original slice.
+	clone := slices.Clone(nums)
+	slices.Reverse(clone)
+
+	// Use a strings.Builder for efficient string concatenation.
+	var builder strings.Builder
+
+	// Iterate over the slice elements reversly.
+	for i, cl := range clone {
+		// Convert the uint32 to its string representation.
+		// We use base 10 (decimal) and specify 32-bit type for clarity,
+		// though 'FormatInt' takes an int64 internally (uint32 is safely converted).
+		str := strconv.FormatInt(int64(cl), 10)
+
+		// Write the string representation to the builder.
+		builder.WriteString(str)
+
+		// Append the separator for all elements except the last one.
+		if i < len(clone)-1 {
+			builder.WriteString("-")
+		}
+	}
+
+	// Return the final concatenated string.
+	return builder.String()
 }

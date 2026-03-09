@@ -4,6 +4,7 @@ This library aims to simplify error handling in Go through the following key fea
 * Variadic options following the "Functional Options" pattern
 * An error code, obtained by concatenating identifiers defined at each calls of subfunctions, that allow tracing the root cause
 * Comply with error interface (Error() string)
+* JSON formatting message with markers
 
 # One unique function
 The signature of this unique function would be:
@@ -34,12 +35,11 @@ Signature could be as follow
 errors.WithDetail(string)
 errors.WithDetailf(string, ...any)
 errors.WithProperty(string, any)
-errors.WithIdentifier(int)
+errors.WithIdentifier(uint32)
 errors.CausedBy(err error)
 ```
 
 # Identifier
-
 Below an example of using `go-errors` with identifier.  
 Also, find the expected error message
 
@@ -57,7 +57,7 @@ var ErrForbidden = errors.New("forbidden")
 
 func main(){
     err := call1()
-    fmt.Println(err)
+    fmt.Println(err.Error())
 }
 
 func call1() error {
@@ -85,9 +85,9 @@ func call3() error {
     // Something went wrong here
 	return errors.Wrap(
         ErrForbidden,
-        errors.WithIdentifer(2),
+        errors.WithIdentifier(2),
         errors.WithDetail("permission denied"),
-		errors.WithProperty("File", "test.txt"),
+        errors.WithProperty("File", "test.txt"),
         errors.CausedBy(err),
     )
 }
@@ -95,5 +95,11 @@ func call3() error {
 
 In the following situation, the program would return
 ```
-forbidden (19-12-2): permission denied: missing required role: Role='Reader', User='john.doe', File='test.txt', at=(func='main.call3', file='main.go', line='41'), caused by: open test.txt: permission denied
+forbidden (19-12-2): permission denied: missing required role: Role='Reader', User='john.doe', File='test.txt', at=[(func='main.call3', file='main.go', line='40'), (func='main.call2', file='main.go', line='27'), (func='main.call1', file='main.go', line='20')], caused by: open test.txt: permission denied
 ```
+
+# JSON formatting message
+| Marker | Description                |
+| ------ | -------------------------- |
+| `%v`   | JSON (without stack)       |
+| `%+v`  | Extended JSON (with stack) |
