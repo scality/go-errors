@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: github.ref_name == 'main'
     steps:
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: app-token
         # NOTE: This is needed otherwise it's the same user that create the tag
         # than the one triggering the workflow on push tag which does not work
