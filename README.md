@@ -69,11 +69,13 @@ err3 := errors.Wrap(ErrRequestFailed,
 	errors.WithProperty("status_code", 500),
 )
 
-// Multiple properties (one option per property)
+// Multiple properties
 err4 := errors.Wrap(ErrDatabaseError,
-	errors.WithProperty("host", "localhost"),
-	errors.WithProperty("port", 5432),
-	errors.WithProperty("database", "myapp"),
+	errors.WithProperties(map[string]any{
+		"host": "localhost",
+		"port": 5432,
+		"database": "myapp",
+	}),
 )
 ```
 

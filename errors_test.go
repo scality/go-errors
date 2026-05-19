@@ -81,13 +81,14 @@ var _ = Describe("Errors", func() {
 				WithIdentifier(1001),
 				WithDetail("This is a test error"),
 				WithProperty("type", "fake"),
+				WithProperties(map[string]any{"key1": "value1", "key2": "value2"}),
 			)
 			var err *Error
 			if ok := errors.As(e, &err); ok {
 				Expect(err.Title).To(Equal("unknown error"))
 				Expect(err.Identifier).To(Equal([]uint32{1001}))
 				Expect(err.Details).To(Equal([]string{"This is a test error"}))
-				Expect(err.Properties).To(Equal(map[string]any{"type": "fake"}))
+				Expect(err.Properties).To(Equal(map[string]any{"key2": "value2", "type": "fake", "key1": "value1"}))
 				Expect(err.Cause).To(Equal(&causeError{error: errTest}))
 				Expect(err.stack[0].File).To(ContainSubstring("errors_test.go"))
 				Expect(err.stack[0].Line).To(BeNumerically(">", 0))
@@ -115,6 +116,7 @@ var _ = Describe("Errors", func() {
 			e = Wrap(ErrNotFound,
 				WithDetail("File not found in the session"),
 				WithProperty("File", "test.txt"),
+				WithProperties(map[string]any{"key1": "value1", "key2": "value2"}),
 				WithIdentifier(1001),
 			)
 			var err *Error
@@ -122,7 +124,7 @@ var _ = Describe("Errors", func() {
 				Expect(err.Title).To(Equal("not found"))
 				Expect(err.Identifier).To(Equal([]uint32{1001}))
 				Expect(err.Details).To(Equal([]string{"File not found in the session"}))
-				Expect(err.Properties).To(Equal(map[string]any{"File": "test.txt"}))
+				Expect(err.Properties).To(Equal(map[string]any{"File": "test.txt", "key1": "value1", "key2": "value2"}))
 				Expect(err.Cause).To(BeNil())
 				Expect(err.stack[0].File).To(ContainSubstring("errors_test.go"))
 			}
@@ -149,13 +151,16 @@ var _ = Describe("Errors", func() {
 				WithIdentifier(1001),
 				WithDetail("custom client role is 'Reader'"),
 				WithProperty("ClientID", "1234567890"),
+				WithProperties(map[string]any{"key1": "value1", "key2": "value2"}),
 			)
 			var err *Error
 			if ok := errors.As(e, &err); ok {
 				Expect(err.Title).To(Equal("not found"))
 				Expect(err.Identifier).To(Equal([]uint32{1, 1001}))
 				Expect(err.Details).To(Equal([]string{"File not found in the session", "custom client role is 'Reader'"}))
-				Expect(err.Properties).To(Equal(map[string]any{"File": "test.txt", "User": "john.doe", "ClientID": "1234567890"}))
+				Expect(err.Properties).To(Equal(map[string]any{
+					"key1": "value1", "key2": "value2", "File": "test.txt", "User": "john.doe", "ClientID": "1234567890",
+				}))
 				Expect(err.Cause).To(BeNil())
 				Expect(err.stack[0].File).To(ContainSubstring("errors_test.go"))
 				Expect(err.stack[0].Line).To(BeNumerically(">", 0))
