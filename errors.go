@@ -129,6 +129,16 @@ func WithProperty(key string, value any) Option {
 	}
 }
 
+// WithProperties sets multiple properties for the error.
+func WithProperties(properties map[string]any) Option {
+	if properties == nil {
+		return func(c *opts) {}
+	}
+	return func(c *opts) {
+		maps.Copy(c.Properties, properties)
+	}
+}
+
 // CausedBy sets the underlying cause of this error.
 func CausedBy(err error) Option {
 	return func(c *opts) {

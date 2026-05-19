@@ -26,6 +26,7 @@ The variadic options would be the following one
 
 * `WithDetail`/`WithDetailf`: provide a message that details the error
 * `WithProperty`: provide a key/value pair for additional informations (filename, path, username, ... )
+* `WithProperties`: provide multiple properties at once
 * `WithIdentifier`: used to provide an identifer, it could be concatenated with other idenfier from previous calls from subfunctions (See example below for clarity)
 * `CausedBy`: used to trace a root error
 
@@ -35,6 +36,7 @@ Signature could be as follow
 errors.WithDetail(string)
 errors.WithDetailf(string, ...any)
 errors.WithProperty(string, any)
+errors.WithProperties(map[string]any)
 errors.WithIdentifier(uint32)
 errors.CausedBy(err error)
 ```
