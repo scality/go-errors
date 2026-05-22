@@ -213,7 +213,7 @@ func (e *Error) Error() string {
 		b,
 		"%s (%s):",
 		strings.ToLower(e.Title),
-		concatenateUint32Slice(e.Identifier),
+		e.GetIdentifier(),
 	)
 
 	if len(e.Details) > 0 {
@@ -329,15 +329,14 @@ func trace() *Trace {
 	}
 }
 
-// concatenateUint32Slice takes a slice of uint32 and returns a single reversed string
-// with all elements joined by a hyphen ("-").
-func concatenateUint32Slice(nums []uint32) string {
-	if len(nums) == 0 {
+// GetIdentifier returns a string with all identifiers reversed and joined by a hyphen ("-").
+func (e *Error) GetIdentifier() string {
+	if len(e.Identifier) == 0 {
 		return ""
 	}
 
 	// Clone to avoid modifying the original slice.
-	clone := slices.Clone(nums)
+	clone := slices.Clone(e.Identifier)
 	slices.Reverse(clone)
 
 	// Use a strings.Builder for efficient string concatenation.
