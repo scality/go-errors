@@ -182,6 +182,25 @@ e2.Is(e1) return True // e1 is a parent of e2
 e1.Is(e2) return False
 ```
 
+### Specific use-case with IdentifierStartsWith()
+
+`IdentifierStartsWith(error, prefix)` checks whether this error's identifier, formatted as a string, starts with the given prefix.
+
+For example:
+If e.Identifier: "3-2-1", then
+```go
+IdentifierStartsWith(e, "3-2") return True
+IdentifierStartsWith(e, "2-1") return False
+```
+
+### Is() and IdentifierStartsWith() comparison
+
+```go
+e := Wrap(Wrap(Wrap(ErrForbidden, WithIdentifier(1)), WithIdentifier(2)), WithIdentifier(3))
+IdentifierStartsWith(e, "3-2")       // true — matches the most recent wraps (outermost)
+Is(e, ErrForbidden)                  // matches an ancestor (innermost)
+```
+
 ## Output Format
 
 The `Error()` method produces output in the following format:
