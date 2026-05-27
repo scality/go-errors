@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+const separator = "-"
+
 // Trace represents a single entry in an error's stack trace.
 // It captures the location and time when an error was thrown or stamped.
 type Trace struct {
@@ -178,6 +180,26 @@ func Is(err, target error) bool { return errors.Is(err, target) }
 // As is a wrapper around errors.As to check if the error is of a specific type.
 func As(err error, target any) bool { return errors.As(err, target) }
 
+// IdentifierStartsWith checks if the error's identifier string starts with the given prefix.
+func IdentifierStartsWith(err error, prefix string) bool {
+	var e *Error
+	if !errors.As(err, &e) {
+		return false
+	}
+
+	if prefix == "" {
+		return true
+	}
+
+	// To avoid uint32 conversion and errors handling, we decided to compare:
+	// * the identifier, suffixed with an hyphen
+	// * the prefix, suffixed with an hyphen
+	return strings.HasPrefix(
+		e.GetIdentifier()+separator,
+		prefix+separator,
+	)
+}
+
 // Unwrap returns the underlying cause of this error, nil if no cause.
 func Unwrap(err error) error {
 	u, ok := err.(interface {
@@ -329,7 +351,7 @@ func trace() *Trace {
 	}
 }
 
-// GetIdentifier returns a string with all identifiers reversed and joined by a hyphen ("-").
+// GetIdentifier returns a string with all identifiers reversed and joined by a hyphen (-).
 func (e *Error) GetIdentifier() string {
 	if len(e.Identifier) == 0 {
 		return ""
@@ -354,7 +376,7 @@ func (e *Error) GetIdentifier() string {
 
 		// Append the separator for all elements except the last one.
 		if i < len(clone)-1 {
-			builder.WriteString("-")
+			builder.WriteString(separator)
 		}
 	}
 

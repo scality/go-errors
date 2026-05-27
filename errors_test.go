@@ -445,6 +445,53 @@ var _ = Describe("Errors", func() {
 		})
 	})
 
+	Context("When comparing error with IdentifierStartsWith", func() {
+		It("should return true when error's identifier starts with the prefix", func() {
+			e := Wrap(ErrForbidden, WithIdentifier(1))
+			Expect(IdentifierStartsWith(e, "1")).To(BeTrue())
+		})
+
+		It("should return true when error's identifiers start with the prefix", func() {
+			e1_1 := Wrap(ErrForbidden, WithIdentifier(12))
+			e1_2 := Wrap(e1_1, WithIdentifier(22))
+			e1_3 := Wrap(e1_2, WithIdentifier(31))
+			Expect(IdentifierStartsWith(e1_3, "3")).To(BeFalse())
+			Expect(IdentifierStartsWith(e1_3, "31")).To(BeTrue())
+			Expect(IdentifierStartsWith(e1_3, "31-2")).To(BeFalse())
+			Expect(IdentifierStartsWith(e1_3, "31-22")).To(BeTrue())
+			Expect(IdentifierStartsWith(e1_3, "31-22-1")).To(BeFalse())
+			Expect(IdentifierStartsWith(e1_3, "31-22-12")).To(BeTrue())
+		})
+
+		It("should return false when error's identifier does not start with the prefix", func() {
+			e := Wrap(ErrForbidden, WithIdentifier(1))
+			Expect(IdentifierStartsWith(e, "2")).To(BeFalse())
+		})
+
+		It("should return false when error's identifiers do not start with the prefix", func() {
+			e1_1 := Wrap(ErrForbidden, WithIdentifier(1))
+			e1_2 := Wrap(e1_1, WithIdentifier(2))
+			e1_3 := Wrap(e1_2, WithIdentifier(3))
+			Expect(IdentifierStartsWith(e1_3, "1")).To(BeFalse())
+			Expect(IdentifierStartsWith(e1_3, "2")).To(BeFalse())
+			Expect(IdentifierStartsWith(e1_3, "2-1")).To(BeFalse())
+		})
+
+		It("should return false when error is not an *Error", func() {
+			e := errTest
+			Expect(IdentifierStartsWith(e, "1")).To(BeFalse())
+		})
+
+		It("should return false when error is nil", func() {
+			Expect(IdentifierStartsWith(nil, "1")).To(BeFalse())
+		})
+
+		It("should return true when empty prefix", func() {
+			e := Wrap(ErrForbidden, WithIdentifier(1))
+			Expect(IdentifierStartsWith(e, "")).To(BeTrue())
+		})
+	})
+
 	Context("When unwrapping errors", func() {
 		It("should return the cause when present", func() {
 			e := Wrap(ErrForbidden, CausedBy(errPerm))
