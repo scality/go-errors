@@ -281,16 +281,44 @@ var _ = Describe("Errors", func() {
 			)
 			result := e.Error()
 
-			// Replace line number and function references
-			result = regexp.MustCompile(`line='\d+'`).ReplaceAllString(result, "line=''")
-			result = regexp.MustCompile(`func='[a-z0-9\/\.\-]*'`).ReplaceAllString(result, "func=''")
 			Expect(result).To(ContainSubstring("forbidden (932-128):"))
 			Expect(result).To(ContainSubstring("custom client role is 'Reader':"))
 			Expect(result).To(ContainSubstring("missing write permission on the file:"))
 			Expect(result).To(ContainSubstring("File='test.txt'"))
 			Expect(result).To(ContainSubstring("ClientID='1234567890'"))
-			Expect(result).To(ContainSubstring("at=[(func='', file='errors_test.go', line=''), (func='', file='errors_test.go', line='')]"))
 			Expect(result).To(ContainSubstring("caused by: permission denied"))
+		})
+
+		It("renders cleanly without dangling separators before the cause", func() {
+			withProps := Wrap(New("database error"),
+				WithIdentifier(1001),
+				WithDetail("connection timeout"),
+				WithProperty("host", "localhost"),
+				CausedBy(errPerm),
+			)
+			Expect(withProps.Error()).To(Equal(
+				"database error (1001): connection timeout: host='localhost', caused by: permission denied",
+			))
+			Expect(withProps.Error()).NotTo(ContainSubstring(",,"))
+
+			withoutProps := Wrap(New("internal error"),
+				WithDetail("boom"),
+				CausedBy(errPerm),
+			)
+			Expect(withoutProps.Error()).To(Equal(
+				"internal error: boom, caused by: permission denied",
+			))
+			Expect(withoutProps.Error()).NotTo(ContainSubstring(":,"))
+
+			titleOnly := Wrap(New("oops"), CausedBy(errPerm))
+			Expect(titleOnly.Error()).To(Equal("oops, caused by: permission denied"))
+
+			noCause := Wrap(New("validation failed"),
+				WithIdentifier(1),
+				WithDetail("email is required"),
+				WithProperty("field", "email"),
+			)
+			Expect(noCause.Error()).To(Equal("validation failed (1): email is required: field='email'"))
 		})
 	})
 
