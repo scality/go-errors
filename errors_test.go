@@ -1,8 +1,10 @@
 package errors
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
@@ -281,16 +283,44 @@ var _ = Describe("Errors", func() {
 			)
 			result := e.Error()
 
-			// Replace line number and function references
-			result = regexp.MustCompile(`line='\d+'`).ReplaceAllString(result, "line=''")
-			result = regexp.MustCompile(`func='[a-z0-9\/\.\-]*'`).ReplaceAllString(result, "func=''")
 			Expect(result).To(ContainSubstring("forbidden (932-128):"))
 			Expect(result).To(ContainSubstring("custom client role is 'Reader':"))
 			Expect(result).To(ContainSubstring("missing write permission on the file:"))
 			Expect(result).To(ContainSubstring("File='test.txt'"))
 			Expect(result).To(ContainSubstring("ClientID='1234567890'"))
-			Expect(result).To(ContainSubstring("at=[(func='', file='errors_test.go', line=''), (func='', file='errors_test.go', line='')]"))
 			Expect(result).To(ContainSubstring("caused by: permission denied"))
+		})
+
+		It("renders cleanly without dangling separators before the cause", func() {
+			withProps := Wrap(New("database error"),
+				WithIdentifier(1001),
+				WithDetail("connection timeout"),
+				WithProperty("host", "localhost"),
+				CausedBy(errPerm),
+			)
+			Expect(withProps.Error()).To(Equal(
+				"database error (1001): connection timeout: host='localhost', caused by: permission denied",
+			))
+			Expect(withProps.Error()).NotTo(ContainSubstring(",,"))
+
+			withoutProps := Wrap(New("internal error"),
+				WithDetail("boom"),
+				CausedBy(errPerm),
+			)
+			Expect(withoutProps.Error()).To(Equal(
+				"internal error: boom, caused by: permission denied",
+			))
+			Expect(withoutProps.Error()).NotTo(ContainSubstring(":,"))
+
+			titleOnly := Wrap(New("oops"), CausedBy(errPerm))
+			Expect(titleOnly.Error()).To(Equal("oops, caused by: permission denied"))
+
+			noCause := Wrap(New("validation failed"),
+				WithIdentifier(1),
+				WithDetail("email is required"),
+				WithProperty("field", "email"),
+			)
+			Expect(noCause.Error()).To(Equal("validation failed (1): email is required: field='email'"))
 		})
 	})
 
@@ -356,6 +386,82 @@ var _ = Describe("Errors", func() {
 		It("should return empty string", func() {
 			var e *Error
 			Expect(e.Error()).To(Equal(""))
+		})
+	})
+
+	Context("When logging an error via slog.LogValuer", func() {
+		It("resolves to a structured group rather than a string or JSON blob", func() {
+			e = Wrap(ErrForbidden,
+				WithIdentifier(128),
+				WithDetail("missing write permission"),
+				WithProperty("File", "test.txt"),
+				CausedBy(errPerm),
+			)
+
+			value, ok := e.(*Error)
+			Expect(ok).To(BeTrue())
+
+			logged := value.LogValue()
+			Expect(logged.Kind()).To(Equal(slog.KindGroup))
+
+			got := map[string]slog.Value{}
+			for _, a := range logged.Group() {
+				got[a.Key] = a.Value
+			}
+
+			Expect(got["title"].String()).To(Equal("forbidden"))
+			Expect(got["identifier"].String()).To(Equal("128"))
+			Expect(got).To(HaveKey("details"))
+			Expect(got).To(HaveKey("properties"))
+			Expect(got["cause"].String()).To(Equal("permission denied"))
+			Expect(got).To(HaveKey("stack"))
+		})
+
+		It("renders consistently under the text and JSON handlers", func() {
+			e = Wrap(ErrForbidden, WithDetail("boom"))
+
+			var jsonBuf, textBuf bytes.Buffer
+			slog.New(slog.NewJSONHandler(&jsonBuf, nil)).Error("op", "error", e)
+			slog.New(slog.NewTextHandler(&textBuf, nil)).Error("op", "error", e)
+
+			// Both handlers emit the title as a structured field, so
+			// neither is a raw JSON blob nor the other handler's shape.
+			Expect(jsonBuf.String()).To(ContainSubstring(`"error":{"title":"forbidden"`))
+			Expect(textBuf.String()).To(ContainSubstring("error.title=forbidden"))
+			Expect(textBuf.String()).NotTo(ContainSubstring(`{"title"`))
+
+			// The stack renders structurally in JSON and via Trace.String()
+			// in text — never as pointer addresses.
+			Expect(jsonBuf.String()).To(ContainSubstring(`"stack":[{"function"`))
+			Expect(textBuf.String()).To(ContainSubstring("errors_test.go:"))
+			Expect(textBuf.String()).NotTo(ContainSubstring("0x"))
+		})
+
+		It("nests an *Error cause as its own group rather than flattening it", func() {
+			inner := Wrap(ErrForbidden, WithIdentifier(7), WithDetail("inner detail"))
+			e = Wrap(ErrInternal, WithDetail("outer"), CausedBy(inner))
+
+			value, ok := e.(*Error)
+			Expect(ok).To(BeTrue())
+
+			got := map[string]slog.Value{}
+			for _, a := range value.LogValue().Group() {
+				got[a.Key] = a.Value
+			}
+
+			cause := got["cause"].Resolve()
+			Expect(cause.Kind()).To(Equal(slog.KindGroup))
+
+			nested := map[string]slog.Value{}
+			for _, a := range cause.Group() {
+				nested[a.Key] = a.Value
+			}
+			Expect(nested["title"].String()).To(Equal("forbidden"))
+			Expect(nested["identifier"].String()).To(Equal("7"))
+
+			var jsonBuf bytes.Buffer
+			slog.New(slog.NewJSONHandler(&jsonBuf, nil)).Error("op", "error", e)
+			Expect(jsonBuf.String()).To(ContainSubstring(`"cause":{"title":"forbidden"`))
 		})
 	})
 

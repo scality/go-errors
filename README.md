@@ -10,6 +10,7 @@ A Go library for enhanced error handling with stack traces, structured error inf
 - **Single Entry Point**: `Wrap(error, ...Option)` works with both standard errors and go-errors
 - **Standard Library Compatible**: Implements standard error interface and works with `errors.Is()`, `errors.As()`, and `errors.Unwrap()`
 - **JSON Serialization**: Built-in JSON marshaling for logging and debugging
+- **Structured Logging**: Implements `slog.LogValuer`, so errors render as a consistent structured group under both the `slog` text and JSON handlers (stack included)
 
 ## Installation
 
@@ -203,24 +204,26 @@ Is(e, ErrForbidden)                  // matches an ancestor (innermost)
 
 ## Output Format
 
-The `Error()` method produces output in the following format:
+The `Error()` method produces a human-readable message in the following format:
 
 ```
-title (id): detail1: detail2: detail3: key1='value1', key2='value2', at=[(func='func1Name', file='file.go', line='21'), (func='func2Name', file='file.go', line='10')], caused by: underlying error
+title (id): detail1: detail2: detail3: key1='value1', key2='value2', caused by: underlying error
 ```
+
+The stack trace is intentionally **not** part of `Error()` - it is noise for CLIs, `%w` chains and plain logging. Use the `%+v` verb or `slog` (see [Structured Logging](#structured-logging-slog)) to get the full message plus stack. The `(id)` segment is omitted when the error has no identifier.
 
 Details are stored as a slice and joined with `: ` when the error is formatted. Each `WithDetail()` or `WithDetailf()` option appends to this slice.
 
 Example with multiple details:
 
 ```
-database error (1001): connection timeout: retry limit exceeded: host='localhost', port='5432', at=[(func='connectDB', file='db.go', line='42')], caused by: dial tcp: connection refused
+database error (1001): connection timeout: retry limit exceeded: host='localhost', port='5432', caused by: dial tcp: connection refused
 ```
 
-Example with wrapped error:
+Example with wrapped error (no identifier):
 
 ```
-unknown error (0): failed to fetch user from database: at=[(func='getUser', file='user.go', line='25')], caused by: connection refused
+unknown error: failed to fetch user from database, caused by: connection refused
 ```
 
 ## JSON formatting message
@@ -240,6 +243,28 @@ Example with extended JSON, with stack (%+v):
 ```
 {"title":"forbidden","identifier":[2,12,19],"details":["permission denied","missing required role"],"properties":{"File":"test.txt","Role":"Reader"},"cause":"open test.txt: permission denied","stack":[{"function":"main.call1","file":"/path/to/main.go","line":25},{"function":"main.call2","file":"/path/to/main.go","line":29},{"function":"main.call3","file":"/path/to/main.go","line":38}]}
 ```
+
+## Structured Logging (slog)
+
+`*Error` implements `slog.LogValuer`, so logging an error resolves to a structured group - identically under the text and JSON handlers. Without it, the JSON handler would log the `Error()` string while the text handler logged the `%+v` JSON blob, giving opposite shapes for the same value. The stack **is** included here, since structured logs are meant for post-mortem debugging.
+
+```go
+logger.Error("request failed", "error", err)
+```
+
+JSON handler - every field is queryable; `identifier` is the concatenated string and `stack` is an array of `{function, file, line}` objects (with the full file path):
+
+```
+{"time":"...","level":"ERROR","msg":"request failed","error":{"title":"forbidden","identifier":"12-2","details":["permission denied"],"properties":{"File":"test.txt"},"cause":"open test.txt: permission denied","stack":[{"function":"main.call2","file":"/path/to/main.go","line":29},{"function":"main.call1","file":"/path/to/main.go","line":20}]}}
+```
+
+Text handler - the same group, with each stack frame rendered as `<function> <file>:<line>` (short file name) instead of a pointer address:
+
+```
+time=... level=ERROR msg="request failed" error.title=forbidden error.identifier=12-2 error.details="[permission denied]" error.properties=map[File:test.txt] error.cause="open test.txt: permission denied" error.stack="[main.call2 main.go:29 main.call1 main.go:20]"
+```
+
+A `caused by` that is itself an `*Error` is nested as its own queryable group rather than flattened to a string.
 
 ## Best Practices
 

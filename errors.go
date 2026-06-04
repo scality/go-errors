@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"runtime"
@@ -27,6 +28,15 @@ type Trace struct {
 
 	// The line where the error occurred
 	Line int `json:"line,omitempty" yaml:"line,omitempty"`
+}
+
+// String renders the frame as "<function> <file>:<line>", using just the
+// base file name so a stack of *Trace prints readably under fmt's %v/%s
+// (and therefore under slog's text handler) instead of as pointer
+// addresses. JSON consumers still get the full path and structured object
+// via the field tags.
+func (t Trace) String() string {
+	return fmt.Sprintf("%s %s:%d", t.Function, filepath.Base(t.File), t.Line)
 }
 
 // Error is an enhanced error implementation that supports structured error information,
@@ -222,8 +232,11 @@ func (e *Error) Unwrap() error {
 	return nil
 }
 
-// Error returns a formatted string representation of the error,
-// including title, identifier, details, properties, location and cause.
+// Error returns a human-readable representation of the error: title,
+// identifier, details, properties and cause. The stack trace is
+// intentionally NOT included here — Error() (and the %s/%q verbs) is the
+// message form consumed by CLIs, %w chains and plain logging, where a
+// stack is noise. Use the %+v verb for the full message-plus-stack dump.
 func (e *Error) Error() string {
 	if e == nil {
 		return ""
@@ -231,59 +244,77 @@ func (e *Error) Error() string {
 
 	b := bytes.NewBuffer(nil)
 
-	fmt.Fprintf(
-		b,
-		"%s (%s):",
-		strings.ToLower(e.Title),
-		e.GetIdentifier(),
-	)
+	if id := e.GetIdentifier(); id != "" {
+		fmt.Fprintf(b, "%s (%s)", strings.ToLower(e.Title), id)
+	} else {
+		fmt.Fprint(b, strings.ToLower(e.Title))
+	}
 
 	if len(e.Details) > 0 {
-		fmt.Fprintf(
-			b,
-			" %s:",
-
-			strings.Join(e.Details, ": "),
-		)
+		fmt.Fprintf(b, ": %s", strings.Join(e.Details, ": "))
 	}
 
-	// order by keys before printing for deterministic output
-	keys := make([]string, 0, len(e.Properties))
-	for k := range e.Properties {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		v := e.Properties[k]
-		fmt.Fprintf(b, " %s='%v',", k, v)
-	}
-
-	if len(e.stack) > 0 {
-		stack := make([]string, 0, len(e.stack))
-		for i := len(e.stack) - 1; i >= 0; i-- {
-			trace := e.stack[i]
-			stack = append(
-				stack,
-				fmt.Sprintf(
-					"(func='%s', file='%s', line='%d')",
-					trace.Function,
-					filepath.Base(trace.File),
-					trace.Line,
-				),
-			)
+	if len(e.Properties) > 0 {
+		// order by keys for deterministic output
+		keys := make([]string, 0, len(e.Properties))
+		for k := range e.Properties {
+			keys = append(keys, k)
 		}
-		fmt.Fprintf(
-			b,
-			" at=[%s]",
-			strings.Join(stack, ", "),
-		)
+		slices.Sort(keys)
+
+		props := make([]string, 0, len(keys))
+		for _, k := range keys {
+			props = append(props, fmt.Sprintf("%s='%v'", k, e.Properties[k]))
+		}
+		fmt.Fprintf(b, ": %s", strings.Join(props, ", "))
 	}
 
 	if e.Cause != nil {
 		fmt.Fprintf(b, ", caused by: %v", e.Cause.Error())
 	}
 
-	return string(bytes.TrimSuffix(bytes.TrimSuffix(b.Bytes(), []byte(",")), []byte(":")))
+	return b.String()
+}
+
+// LogValue implements slog.LogValuer so the error logs as one consistent,
+// structured group under both the text and JSON handlers. Without it the
+// JSON handler renders Error() (a string) while the text handler renders
+// %+v (JSON), giving opposite shapes for the same value.
+//
+// The stack is included — the point of a structured error log is
+// post-mortem debugging. JSON consumers get the stack as an array of
+// {function,file,line} objects (queryable); the text handler renders
+// each frame via Trace.String(). The CLI form (Error()) stays
+// stack-free: the two audiences are served differently on purpose.
+func (e *Error) LogValue() slog.Value {
+	if e == nil {
+		return slog.GroupValue()
+	}
+
+	attrs := make([]slog.Attr, 0, 6)
+	attrs = append(attrs, slog.String("title", e.Title))
+
+	if id := e.GetIdentifier(); id != "" {
+		attrs = append(attrs, slog.String("identifier", id))
+	}
+
+	if len(e.Details) > 0 {
+		attrs = append(attrs, slog.Any("details", e.Details))
+	}
+
+	if len(e.Properties) > 0 {
+		attrs = append(attrs, slog.Any("properties", e.Properties))
+	}
+
+	if e.Cause != nil {
+		attrs = append(attrs, slog.Any("cause", e.Cause.error))
+	}
+
+	if len(e.stack) > 0 {
+		attrs = append(attrs, slog.Any("stack", e.stack))
+	}
+
+	return slog.GroupValue(attrs...)
 }
 
 func from(err error, copyStack bool, options ...Option) *Error {
