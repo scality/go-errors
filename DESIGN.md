@@ -3,8 +3,9 @@ This library aims to simplify error handling in Go through the following key fea
 * One unique function with argument for standard error and go-errors
 * Variadic options following the "Functional Options" pattern
 * An error code, obtained by concatenating identifiers defined at each calls of subfunctions, that allow tracing the root cause
-* Comply with error interface (Error() string)
+* Comply with error interface (Error() string) - a human-readable message, without the stack trace
 * JSON formatting message with markers
+* Structured logging via `slog.LogValuer` - a consistent structured group (stack included) under both the text and JSON handlers
 
 # One unique function
 The signature of this unique function would be:
@@ -97,11 +98,16 @@ func call3() error {
 
 In the following situation, the program would return
 ```
-forbidden (19-12-2): permission denied: missing required role: Role='Reader', User='john.doe', File='test.txt', at=[(func='main.call3', file='main.go', line='40'), (func='main.call2', file='main.go', line='27'), (func='main.call1', file='main.go', line='20')], caused by: open test.txt: permission denied
+forbidden (19-12-2): permission denied: missing required role: File='test.txt', Role='Reader', User='john.doe', caused by: open test.txt: permission denied
 ```
+
+`Error()` is the human-readable form and does not include the stack trace (properties are sorted by key). The stack is available through the `%+v` verb and through `slog` (see below).
 
 # JSON formatting message
 | Marker | Description                |
 | ------ | -------------------------- |
 | `%v`   | JSON (without stack)       |
 | `%+v`  | Extended JSON (with stack) |
+
+# Structured logging
+`*Error` implements `slog.LogValuer`, so under `slog` the error resolves to a single structured group - the same shape under the text and JSON handlers - rather than the JSON handler logging `Error()` while the text handler logs the `%+v` blob. The stack is included (structured logs are for post-mortem debugging), and a `caused by` that is itself an `*Error` is nested as its own group.
