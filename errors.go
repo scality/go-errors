@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -26,6 +28,15 @@ type Trace struct {
 
 	// The line where the error occurred
 	Line int `json:"line,omitempty" yaml:"line,omitempty"`
+}
+
+// String renders the frame as "<function> <file>:<line>", using just the
+// base file name so a stack of *Trace prints readably under fmt's %v/%s
+// (and therefore under slog's text handler) instead of as pointer
+// addresses. JSON consumers still get the full path and structured object
+// via the field tags.
+func (t Trace) String() string {
+	return fmt.Sprintf("%s %s:%d", t.Function, filepath.Base(t.File), t.Line)
 }
 
 // Error is an enhanced error implementation that supports structured error information,
@@ -263,6 +274,47 @@ func (e *Error) Error() string {
 	}
 
 	return b.String()
+}
+
+// LogValue implements slog.LogValuer so the error logs as one consistent,
+// structured group under both the text and JSON handlers. Without it the
+// JSON handler renders Error() (a string) while the text handler renders
+// %+v (JSON), giving opposite shapes for the same value.
+//
+// The stack is included — the point of a structured error log is
+// post-mortem debugging. JSON consumers get the stack as an array of
+// {function,file,line} objects (queryable); the text handler renders
+// each frame via Trace.String(). The CLI form (Error()) stays
+// stack-free: the two audiences are served differently on purpose.
+func (e *Error) LogValue() slog.Value {
+	if e == nil {
+		return slog.GroupValue()
+	}
+
+	attrs := make([]slog.Attr, 0, 6)
+	attrs = append(attrs, slog.String("title", e.Title))
+
+	if id := e.GetIdentifier(); id != "" {
+		attrs = append(attrs, slog.String("identifier", id))
+	}
+
+	if len(e.Details) > 0 {
+		attrs = append(attrs, slog.Any("details", e.Details))
+	}
+
+	if len(e.Properties) > 0 {
+		attrs = append(attrs, slog.Any("properties", e.Properties))
+	}
+
+	if e.Cause != nil {
+		attrs = append(attrs, slog.Any("cause", e.Cause.error))
+	}
+
+	if len(e.stack) > 0 {
+		attrs = append(attrs, slog.Any("stack", e.stack))
+	}
+
+	return slog.GroupValue(attrs...)
 }
 
 func from(err error, copyStack bool, options ...Option) *Error {
