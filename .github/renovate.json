@@ -2,5 +2,18 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "github>scality/platform-renovate"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["go"],
+      "matchDepTypes": ["golang"],
+      "enabled": false
+    },
+    {
+      "matchDatasources": ["golang-version", "docker"],
+      "matchPackageNames": ["go", "golang", "mcr.microsoft.com/devcontainers/go"],
+      "allowedVersions": "<1.26"
+    }
   ]
 }
