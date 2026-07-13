@@ -8,23 +8,6 @@ on:
 
 jobs:
   create-release:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          # NOTE: We explicitly set the refs otherwise the tag
-          # annotations content is not fetched
-          # See: https://github.com/actions/checkout/issues/882
-          ref: ${{ github.ref }}
-      - uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
-        with:
-          name: Go-errors ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          # We consider pre-releases if the tag contains a hyphen
-          # e.g. v1.2.3-alpha.0
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          draft: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    uses: scality/workflows/.github/workflows/promote.yaml@7d91dc4ebbe136b54518aa42a1ad6014f8f91526 # v2.9.1
+    permissions:
+      contents: write

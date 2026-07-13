@@ -23,61 +23,31 @@ on:
           - "minor"
           - "major"
 
+# The GITHUB_TOKEN only needs to read the repository; the tag is pushed by the
+# reusable workflow with the GitHub App token.
+permissions:
+  contents: read
+
 jobs:
-  prepare-version:
+  quality-gate:
+    # Releases are cut from `main` without re-running pre-merge, and for a Go
+    # library the tag is the artifact: this is the only verification point.
     runs-on: ubuntu-24.04
     if: github.ref_name == 'main'
     steps:
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        id: app-token
-        # NOTE: This is needed otherwise it's the same user that create the tag
-        # than the one triggering the workflow on push tag which does not work
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          app-id: ${{ vars.ACTIONS_APP_ID }}
-          private-key: ${{ secrets.ACTIONS_APP_PRIVATE_KEY }}
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
-      - name: Install semver tool
-        run: |
-          curl --fail -LO https://raw.githubusercontent.com/fsaintjacques/semver-tool/3.4.0/src/semver
-          chmod +x ./semver
-      - name: Compose release tag
-        run: |
-          last_ga_tag=$(git tag --sort=taggerdate --list "v*" | grep -v '\-' | tail -n 1)
-          if [[ -z "$last_ga_tag" ]]; then
-            last_ga_tag="0.0.0"
-          fi
+          go-version-file: go.mod
+      - name: Run tests
+        run: go test -v -race ./...
 
-          new_version=$(./semver bump ${{ inputs.version-scope }} "$last_ga_tag")
-
-          if [[ "${{ inputs.version-type }}" == "alpha" ]] || [[ "${{ inputs.version-type }}" == "beta" ]]; then
-            last_pre_tag=$(git tag --sort=taggerdate --list "v$new_version-${{ inputs.version-type }}.*" | tail -n 1)
-            if [[ -z "$last_pre_tag" ]]; then
-              new_version=$new_version-${{ inputs.version-type }}.1
-            else
-              new_version=$(./semver bump prerel "$last_pre_tag")
-            fi
-          fi
-
-          if [[ "${new_version:0:1}" != "v" ]]; then
-            new_version="v$new_version"
-          fi
-
-          echo "New version: $new_version"
-          echo "RELEASE_TAG=$new_version" >> $GITHUB_ENV
-      - name: Validate ${{ env.RELEASE_TAG }} tag
-        run: ./semver validate ${{ env.RELEASE_TAG }}
-
-      - name: Create and push `${{ env.RELEASE_TAG }}` tag
-        run: |
-          git fsck
-          git gc
-          
-          git config --global user.email ${{ github.actor }}@scality.com
-          git config --global user.name ${{ github.actor }}
-
-          git tag -a "${{ env.RELEASE_TAG }}" -m "Go-errors ${{ env.RELEASE_TAG }}"
-          git push origin "${{ env.RELEASE_TAG }}"
+  release:
+    needs: quality-gate
+    uses: scality/workflows/.github/workflows/release.yaml@7d91dc4ebbe136b54518aa42a1ad6014f8f91526 # v2.9.1
+    with:
+      version-type: ${{ inputs.version-type }}
+      version-scope: ${{ inputs.version-scope }}
+      actions-app-id: ${{ vars.ACTIONS_APP_ID }}
+    secrets: inherit
