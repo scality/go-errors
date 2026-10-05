@@ -45,7 +45,7 @@ jobs:
 
   release:
     needs: quality-gate
-    uses: scality/workflows/.github/workflows/release.yaml@7d91dc4ebbe136b54518aa42a1ad6014f8f91526 # v2.9.1
+    uses: scality/workflows/.github/workflows/release.yaml@f05282f5bd6d7e90e8536400cf468f0a54681a48 # v2.10.0
     with:
       version-type: ${{ inputs.version-type }}
       version-scope: ${{ inputs.version-scope }}
