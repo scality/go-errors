@@ -54,7 +54,7 @@ If none of the above was met, open an issue directly in Github, select the appro
 
 ## Testing & Linting
 
-Run tests and lint the code:
+Run tests and lint the code. The devcontainer in `.devcontainer/` has Go and golangci-lint.
 ```go
 go test -v ./...
 golangci-lint run
