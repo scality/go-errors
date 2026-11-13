@@ -25,3 +25,17 @@ jobs:
   test:
     uses: ./.github/workflows/test.yaml
     secrets: inherit
+
+  pre-merge:
+    name: Pre Merge
+    # Single check for rulesets to require: GitHub reports one check per job, never one per workflow
+    # always(): a job skipped because a dependency failed reports success and would let the PR merge
+    if: always()
+    needs:
+      - lint
+      - test
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Fail if a pre-merge job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
