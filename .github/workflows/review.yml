@@ -1,0 +1,28 @@
+name: Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+  pull_request_target:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    # May also trigger on bump branches when a human updates them (acceptable double-review).
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.actor != 'scality-renovate[bot]'
+    uses: scality/workflows/.github/workflows/claude-code-review.yml@91619d883650e6238f517757f7b978757c2cb086 # v2.12.1
+    secrets:
+      # The review prompt is a slash command shipped by the scality-skills
+      # plugin, which the shared workflow clones from the agent-hub marketplace
+      # with this app key. Without it the plugin is skipped and the review
+      # silently does nothing.
+      ACTIONS_APP_PRIVATE_KEY: ${{ secrets.ACTIONS_APP_PRIVATE_KEY }}
+
+  review-dependency-bump:
+    # pr.user.login catches bump PRs updated by a human, where github.actor is no longer the bot.
+    if: github.event_name == 'pull_request_target' && (github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || github.actor == 'scality-renovate[bot]' || github.event.pull_request.user.login == 'scality-renovate[bot]')
+    uses: scality/workflows/.github/workflows/claude-code-dependency-review.yml@91619d883650e6238f517757f7b978757c2cb086 # v2.12.1
+    with:
+      ACTIONS_APP_ID: ${{ vars.ACTIONS_APP_ID }}
+    secrets:
+      ACTIONS_APP_PRIVATE_KEY: ${{ secrets.ACTIONS_APP_PRIVATE_KEY }}
