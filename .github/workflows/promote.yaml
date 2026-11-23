@@ -8,6 +8,6 @@ on:
 
 jobs:
   create-release:
-    uses: scality/workflows/.github/workflows/promote.yaml@91619d883650e6238f517757f7b978757c2cb086 # v2.12.1
+    uses: scality/workflows/.github/workflows/promote.yaml@1c3bb83b992d0a512c08755606ee6439b26c463b # v2.13.0
     permissions:
       contents: write
